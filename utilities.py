@@ -52,19 +52,20 @@ def unzip_file(zip_path, extract_dir=None):
     return extract_dir
 
 
-def move_to_project(src_dir, target_dir, filename=None):
+def move_to_project(src_path, target_dir, filename=None):
     """
-    Move a file from a source directory to a target directory.
-    If filename is specified, move that file; otherwise, move the first file in the directory.
+    Move a file from a source path (file or directory) to a target directory.
+    Searches recursively if the source is a directory.
+    If filename is specified, move that file; otherwise, move the first file found.
 
     Parameters
     ----------
-    src_dir : str
-        Path to the source directory containing the file(s).
+    src_path : str
+        Path to a file or directory containing file(s).
     target_dir : str
         Path to the target directory.
     filename : str, optional
-        Specific filename to move. If not provided, the first file is moved.
+        Specific filename to move. If not provided, the first file found is moved.
 
     Returns
     -------
@@ -74,81 +75,59 @@ def move_to_project(src_dir, target_dir, filename=None):
     Raises
     ------
     FileNotFoundError
-        If the source directory does not exist or the specified file is not found.
+        If the source file/directory does not exist, or if the specified filename is not found.
     """
-    if not os.path.isdir(src_dir):
-        raise FileNotFoundError(f"Source directory not found: {src_dir}")
+    if not os.path.exists(src_path):
+        raise FileNotFoundError(f"Source path not found: {src_path}")
 
-    files = os.listdir(src_dir)
-    if not files:
-        raise FileNotFoundError(f"No files found in source directory: {src_dir}")
-
-    # Determine which file to move
-    if filename:
-        if filename not in files:
-            raise FileNotFoundError(f"Specified file '{filename}' not found in source directory")
-        selected_file = filename
+    # If src_path is a single file
+    if os.path.isfile(src_path):
+        src_file = src_path
+        if filename and os.path.basename(src_file) != filename:
+            raise FileNotFoundError(f"Specified file '{filename}' not found at {src_path}")
     else:
-        selected_file = files[0]
+        # src_path is a directory → walk recursively
+        found_file = None
+        for root, dirs, files in os.walk(src_path):
+            if filename:
+                if filename in files:
+                    found_file = os.path.join(root, filename)
+                    break
+            else:
+                if files:
+                    found_file = os.path.join(root, files[0])
+                    break
 
-    src_file = os.path.join(src_dir, selected_file)
+        if not found_file:
+            if filename:
+                raise FileNotFoundError(f"File '{filename}' not found under {src_path}")
+            else:
+                raise FileNotFoundError(f"No files found under {src_path}")
+        src_file = found_file
+
+    # Ensure target directory exists
     os.makedirs(target_dir, exist_ok=True)
-    dest_file = os.path.join(target_dir, selected_file)
+    dest_file = os.path.join(target_dir, os.path.basename(src_file))
 
     shutil.copy(src_file, dest_file)
+    print(f"✅ Moved '{src_file}' → '{dest_file}'")
     return dest_file
 
 
-def csv_to_df(path_or_url, download_dir="data"):
+def file_to_df(file_path):
     """
-    Load a CSV file into a pandas DataFrame.
-    If a URL is provided, downloads the file locally first.
-
-    Parameters
-    ----------
-    path_or_url : str
-        The file path or URL to a CSV file.
-    download_dir : str, optional
-        Directory to store downloaded files (default is "data").
-
-    Returns
-    -------
-    pandas.DataFrame
-        The loaded DataFrame.
+    Read a CSV or Excel file into a pandas DataFrame.
     """
-    # If input is a URL
-    if isinstance(path_or_url, str) and path_or_url.startswith(("http://", "https://")):
-        # Make sure the download directory exists
-        os.makedirs(download_dir, exist_ok=True)
-
-        # Extract filename from URL
-        filename = os.path.basename(path_or_url.split("?")[0])  # remove query strings if present
-        local_path = os.path.join(download_dir, filename)
-
-        # Download the file
-        try:
-            response = requests.get(path_or_url)
-            response.raise_for_status()  # raise an error for bad responses
-            with open(local_path, "wb") as f:
-                f.write(response.content)
-            print(f"Downloaded CSV to: {local_path}")
-        except Exception as e:
-            raise ValueError(f"Failed to download CSV from URL: {e}")
-
-        # Read CSV into DataFrame
-        df = pd.read_csv(local_path)
-
-    # If input is a local file
-    elif os.path.isfile(path_or_url):
-        df = pd.read_csv(path_or_url)
-
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".csv":
+        return pd.read_csv(file_path)
+    elif ext in [".xls", ".xlsx"]:
+        return pd.read_excel(file_path)
     else:
-        raise ValueError("Input must be a valid CSV file path or URL.")
-
-    return df
+        raise ValueError(f"Unsupported file type: {ext}")
 
 
-def read_kaggle_dataset(url, target=os.path.join(os.getcwd(), "data")):
+def read_kaggle_dataset(url, target=os.path.join(os.getcwd(), "data"), filename=None):
     """
     Take a URL ("url") of a Kaggle dataset, download the csv into its own folder (specified by "target") in the
     project, and read it into a Pandas DataFrame.
@@ -159,6 +138,8 @@ def read_kaggle_dataset(url, target=os.path.join(os.getcwd(), "data")):
         The URL of the Kaggle dataset
     target: str, optional
         Path within project directory to store downloaded csv (default is "data")
+    filename: str, optional
+        Name of the specific file to read from the dataset. If none is provided, the first file found will be picked
 
     Returns
     ------
@@ -166,6 +147,6 @@ def read_kaggle_dataset(url, target=os.path.join(os.getcwd(), "data")):
         The dataframe containing the csv contents.
     """
     path = kagglehub.dataset_download(url)
-    dest_file = move_to_project(path, target)
+    dest_file = move_to_project(path, target, filename=filename)
     print(f"Downloaded and read {dest_file}")
-    return csv_to_df(dest_file)
+    return file_to_df(dest_file)
